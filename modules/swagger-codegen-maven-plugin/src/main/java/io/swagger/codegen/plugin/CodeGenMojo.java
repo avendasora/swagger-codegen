@@ -30,10 +30,13 @@ import java.util.Map;
 
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
+import org.apache.maven.plugins.annotations.Component;
 import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
+import org.codehaus.plexus.util.Scanner;
+import org.sonatype.plexus.build.incremental.BuildContext;
 
 import io.swagger.codegen.CliOption;
 import io.swagger.codegen.ClientOptInput;
@@ -48,6 +51,9 @@ import io.swagger.codegen.config.CodegenConfigurator;
 @Mojo(name = "generate", defaultPhase = LifecyclePhase.GENERATE_SOURCES)
 public class CodeGenMojo extends AbstractMojo {
 
+	@Component
+	private BuildContext buildContext;
+	  
     @Parameter(name="verbose", required = false, defaultValue = "false")
     private boolean verbose;
 
@@ -415,32 +421,46 @@ public class CodeGenMojo extends AbstractMojo {
         final ClientOptInput input = configurator.toClientOptInput();
         final CodegenConfig config = input.getConfig();
 
-        if(configOptions != null) {
-            for (CliOption langCliOption : config.cliOptions()) {
-                if (configOptions.containsKey(langCliOption.getOpt())) {
-                    input.getConfig().additionalProperties().put(langCliOption.getOpt(),
-                            configOptions.get(langCliOption.getOpt()));
-                }
-            }
-        }
+		final boolean hasChangeInCustomTemplates;
+		if (templateDirectory != null) {
+			final Scanner scanner = buildContext.newScanner(templateDirectory);
+			scanner.setIncludes(new String[]{"*.mustache"});
+			scanner.scan();
+			hasChangeInCustomTemplates = scanner.getIncludedFiles() != null;
+		} else {
+			hasChangeInCustomTemplates = false;
+		}
 
-        if(configHelp) {
-            for (CliOption langCliOption : config.cliOptions()) {
-                System.out.println("\t" + langCliOption.getOpt());
-                System.out.println("\t    " + langCliOption.getOptionHelp().replaceAll("\n", "\n\t    "));
-                System.out.println();
-            }
-            return;
-        }
-        try {
-            new DefaultGenerator().opts(input).generate();
-        } catch (Exception e) {
-            // Maven logs exceptions thrown by plugins only if invoked with -e
-            // I find it annoying to jump through hoops to get basic diagnostic information,
-            // so let's log it in any case:
-            getLog().error(e); 
-            throw new MojoExecutionException("Code generation failed. See above for the full exception.");
-        }
+		final boolean hasChangeInInputSpec = buildContext.hasDelta(inputSpec);
+
+		if (hasChangeInCustomTemplates || hasChangeInInputSpec) {
+			if(configOptions != null) {
+	            for (CliOption langCliOption : config.cliOptions()) {
+	                if (configOptions.containsKey(langCliOption.getOpt())) {
+	                    input.getConfig().additionalProperties().put(langCliOption.getOpt(),
+	                            configOptions.get(langCliOption.getOpt()));
+	                }
+	            }
+	        }
+
+	        if(configHelp) {
+	            for (CliOption langCliOption : config.cliOptions()) {
+	                System.out.println("\t" + langCliOption.getOpt());
+	                System.out.println("\t    " + langCliOption.getOptionHelp().replaceAll("\n", "\n\t    "));
+	                System.out.println();
+	            }
+	            return;
+	        }
+	        try {
+	            new DefaultGenerator().opts(input).generate();
+	        } catch (Exception e) {
+	            // Maven logs exceptions thrown by plugins only if invoked with -e
+	            // I find it annoying to jump through hoops to get basic diagnostic information,
+	            // so let's log it in any case:
+	            getLog().error(e); 
+	            throw new MojoExecutionException("Code generation failed. See above for the full exception.");
+	        } 
+		}
 
         addCompileSourceRootIfConfigured();
     }
