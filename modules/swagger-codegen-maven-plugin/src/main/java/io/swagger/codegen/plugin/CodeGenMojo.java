@@ -25,16 +25,22 @@ import static io.swagger.codegen.config.CodegenConfiguratorUtils.applyReservedWo
 import static org.apache.commons.lang3.StringUtils.isNotEmpty;
 
 import java.io.File;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
+import org.apache.maven.plugins.annotations.Component;
 import org.apache.maven.plugins.annotations.LifecyclePhase;
 import org.apache.maven.plugins.annotations.Mojo;
 import org.apache.maven.plugins.annotations.Parameter;
 import org.apache.maven.project.MavenProject;
+import org.codehaus.plexus.util.Scanner;
+import org.sonatype.plexus.build.incremental.BuildContext;
 
 import io.swagger.codegen.CliOption;
 import io.swagger.codegen.ClientOptInput;
@@ -49,6 +55,9 @@ import io.swagger.codegen.config.CodegenConfigurator;
 @Mojo(name = "generate", defaultPhase = LifecyclePhase.GENERATE_SOURCES)
 public class CodeGenMojo extends AbstractMojo {
 
+	@Component
+	private BuildContext buildContext;
+	  
     @Parameter(name="verbose", required = false, defaultValue = "false")
     private boolean verbose;
 
@@ -108,12 +117,6 @@ public class CodeGenMojo extends AbstractMojo {
      */
     @Parameter(name="skipOverwrite", required=false)
     private Boolean skipOverwrite;
-
-    /**
-     * Specifies if the existing files should be overwritten during the generation.
-     */
-    @Parameter(name="removeOperationIdPrefix", required=false)
-    private Boolean removeOperationIdPrefix;
 
     /**
      * The package to use for generated api objects/classes
@@ -180,9 +183,6 @@ public class CodeGenMojo extends AbstractMojo {
      */
     @Parameter(name = "configOptions")
     private Map<?, ?> configOptions;
-
-    @Parameter(name = "importMappings")
-    private List<String> importMappings;
 
     /**
      * Generate the apis
@@ -293,10 +293,6 @@ public class CodeGenMojo extends AbstractMojo {
             configurator.setSkipOverwrite(skipOverwrite);
         }
 
-        if(removeOperationIdPrefix != null) {
-            configurator.setRemoveOperationIdPrefix(removeOperationIdPrefix);
-        }
-
         if(isNotEmpty(inputSpec)) {
             configurator.setInputSpec(inputSpec);
         }
@@ -391,7 +387,7 @@ public class CodeGenMojo extends AbstractMojo {
                 applyInstantiationTypesKvp(configOptions.get("instantiation-types").toString(), configurator);
             }
 
-            if(importMappings == null && configOptions.containsKey("import-mappings")) {
+            if(configOptions.containsKey("import-mappings")) {
                 applyImportMappingsKvp(configOptions.get("import-mappings").toString(), configurator);
             }
 
@@ -406,15 +402,10 @@ public class CodeGenMojo extends AbstractMojo {
             if(configOptions.containsKey("additional-properties")) {
                 applyAdditionalPropertiesKvp(configOptions.get("additional-properties").toString(), configurator);
             }
-
+            
             if(configOptions.containsKey("reserved-words-mappings")) {
                 applyReservedWordsMappingsKvp(configOptions.get("reserved-words-mappings").toString(), configurator);
             }
-        }
-
-        if (importMappings != null && !configOptions.containsKey("import-mappings")) {
-            String importMappingsAsString = importMappings.toString();
-            applyImportMappingsKvp(importMappingsAsString.substring(0, importMappingsAsString.length() - 1), configurator);
         }
 
         if (environmentVariables != null) {
@@ -451,15 +442,21 @@ public class CodeGenMojo extends AbstractMojo {
             }
             return;
         }
-        try {
-            new DefaultGenerator().opts(input).generate();
-        } catch (Exception e) {
-            // Maven logs exceptions thrown by plugins only if invoked with -e
-            // I find it annoying to jump through hoops to get basic diagnostic information,
-            // so let's log it in any case:
-            getLog().error(e); 
-            throw new MojoExecutionException("Code generation failed. See above for the full exception.");
-        }
+
+		if (changesExistSinceLastBuild()) {
+	        try {
+	            List<File> generatedFiles = new DefaultGenerator().opts(input).generate();
+	            for (File generatedFile : generatedFiles) {
+					buildContext.refresh(generatedFile);
+				}
+	        } catch (Exception e) {
+	            // Maven logs exceptions thrown by plugins only if invoked with -e
+	            // I find it annoying to jump through hoops to get basic diagnostic information,
+	            // so let's log it in any case:
+	            getLog().error(e); 
+	            throw new MojoExecutionException("Code generation failed. See above for the full exception.");
+	        } 
+		}
 
         addCompileSourceRootIfConfigured();
     }
@@ -483,4 +480,37 @@ public class CodeGenMojo extends AbstractMojo {
             }
         }
     }
+
+    
+    private boolean changesExistSinceLastBuild() {
+		boolean changesExistSinceLastBuild = buildContext.hasDelta(inputSpec);
+		if (!changesExistSinceLastBuild && templateDirectory != null) {
+			for (File templateFile : getTemplateFiles()) {
+				if (buildContext.hasDelta(templateFile)) {
+					changesExistSinceLastBuild = true;
+					buildContext.removeMessages(templateFile);
+					getLog().debug("Template file '" + templateFile.getPath() + "' detected.");
+				}
+			}
+		}
+		return changesExistSinceLastBuild;
+	}
+
+    private Collection<File> getTemplateFiles() {
+		List<File> templateFiles;
+		final Scanner scanner = buildContext.newScanner(templateDirectory);
+		scanner.setIncludes(new String[]{"*.mustache"});
+		scanner.scan();
+		final String[] array = scanner.getIncludedFiles();
+		if (array != null) {
+			templateFiles = new ArrayList<File>();
+			for (String fileName : array) {
+				final String filePath = templateDirectory + File.separator + fileName;
+				templateFiles.add(new File(filePath));
+			}
+		} else {
+			templateFiles = Collections.emptyList();
+		}
+		return templateFiles;
+	}
 }

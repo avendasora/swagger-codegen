@@ -16,7 +16,6 @@ import io.swagger.codegen.CodegenParameter;
 import io.swagger.codegen.CodegenResponse;
 import io.swagger.codegen.CodegenType;
 import io.swagger.codegen.languages.features.BeanValidationFeatures;
-import io.swagger.codegen.languages.features.UseGenericResponseFeatures;
 import io.swagger.models.Operation;
 import io.swagger.models.Path;
 import io.swagger.models.Swagger;
@@ -226,7 +225,6 @@ public abstract class AbstractJavaJAXRSServerCodegen extends AbstractJavaCodegen
         } else if ( templateName.endsWith("Factory.mustache") ) {
             int ix = result.lastIndexOf('/');
             result = result.substring(0, ix) + "/factories" + result.substring(ix, result.length() - 5) + "ServiceFactory.java";
-            result = result.replace(apiFileFolder(), implFileFolder(implFolder));
         } else if ( templateName.endsWith("Service.mustache") ) {
             int ix = result.lastIndexOf('.');
             result = result.substring(0, ix) + "Service.java";
